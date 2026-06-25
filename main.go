@@ -5,10 +5,29 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
-	"os"
+	"sync"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
+
+type Storage struct {
+	mu   sync.RWMutex
+	data map[string][]byte
+}
+
+func NewStorage() *Storage {
+	return &Storage{
+		data: map[string][]byte{},
+	}
+}
+
+func (s *Storage) put(key string, val []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data[key] = val
+
+	return nil
+}
 
 var (
 	topic = "foobarbaztopic"
@@ -17,9 +36,9 @@ var (
 type MessageState int
 
 const (
-	MessageStateCompleted MessageState = iota
-	MessageStateProgress
-	MessageStateFailed
+	MessageStateCompleted  MessageState = iota
+	MessageStateInProgress MessageState = iota
+	MessageStateFailed     MessageState = iota
 )
 
 type Message struct {
@@ -27,7 +46,7 @@ type Message struct {
 }
 
 func main() {
-	// go produce()
+	produce()
 	consume()
 }
 
@@ -55,24 +74,27 @@ func consume() {
 	for {
 		// poll(), poll the consumer for msgs and events
 		ev := c.Poll(100)
-		if ev != nil {
+		if ev == nil {
 			continue
 		}
 
 		// e -> kafka event
 		switch e := ev.(type) {
 		case *kafka.Message:
-			fmt.Printf("%% Message on %s:\n%s\n", e.TopicPartition, string(e.Value))
 			_, err := c.StoreMessage(e)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "%% Error storing offset after message %s:\n", e.TopicPartition)
+				fmt.Println("store message error: ", err)
 			}
+
+			var msg Message
+			if err := json.Unmarshal(e.Value, &msg); err != nil {
+				log.Fatal(err)
+			}
+			fmt.Println(msg)
 		case kafka.Error:
 			if e.Code() == kafka.ErrAllBrokersDown {
 				break
 			}
-		default:
-			fmt.Printf("Ignored %v\n", e)
 		}
 	}
 }
@@ -82,20 +104,20 @@ func produce() {
 		"bootstrap.servers": "localhost:9093",
 	})
 
-	msg := Message{
-		State: MessageState(rand.Intn(3)),
-	}
-
-	b, err := json.Marshal(msg)
-
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	for i := 0; i < 1000; i++ {
+		msg := Message{
+			State: MessageState(rand.Intn(3)),
+		}
+		b, err := json.Marshal(msg)
+
 		err = p.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
 				Topic:     &topic,
