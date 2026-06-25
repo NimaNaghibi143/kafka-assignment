@@ -1,6 +1,9 @@
 # Kafka-system-design
 
-This is a practice kafka system design repo.
+This is a practice kafka assignment. the main purpose of this small project is:
+
+* Learning the the core concepts of kafka
+* Getting better at golang
 
 ## The Problem
 

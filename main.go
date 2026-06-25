@@ -6,35 +6,40 @@ import (
 	"log"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
 
 type Storer interface {
 	Put(MessageState, []byte) error
-	Get(MessageState) ([]byte, error)
+	Get(MessageState) ([][]byte, error)
 }
 
 type Storage struct {
 	mu   sync.RWMutex
-	data map[MessageState][]byte
+	data map[MessageState][][]byte
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		data: map[MessageState][]byte{},
+		data: map[MessageState][][]byte{
+			MessageStateCompleted:  {},
+			MessageStateInProgress: {},
+			MessageStateFailed:     {},
+		},
 	}
 }
 
 func (s *Storage) Put(state MessageState, val []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[state] = val
+	s.data[state] = append(s.data[state], val)
 
 	return nil
 }
 
-func (s *Storage) Get(state MessageState) ([]byte, error) {
+func (s *Storage) Get(state MessageState) ([][]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	val, ok := s.data[state]
@@ -70,12 +75,19 @@ func main() {
 		log.Fatal(err)
 	}
 
-	c.Start()
+	go func() {
+		time.Sleep(time.Second * 4)
+		c.Stop()
+	}()
+
+	c.consumeLoop()
+	fmt.Printf("%v+\n", c.Storage.(*Storage).data)
 }
 
 type Consumer struct {
 	consumer *kafka.Consumer
 	Storage  Storer
+	quitch   chan struct{}
 }
 
 func NewConsumer(storage Storer) (*Consumer, error) {
@@ -98,43 +110,54 @@ func NewConsumer(storage Storer) (*Consumer, error) {
 	}
 
 	return &Consumer{
-		Storage:  NewStorage(),
+		Storage:  storage,
 		consumer: c,
+		quitch:   make(chan struct{}),
 	}, nil
 }
 
-func (c *Consumer) Start() {
-	go c.consumeLoop()
+func (c *Consumer) Stop() {
+	close(c.quitch)
 }
+
+// to avoid over engineering we comment this
+// func (c *Consumer) Start() {
+// 	go c.consumeLoop()
+// }
 
 // it's a streaming server so it's considered a loop in my opinion
 func (c *Consumer) consumeLoop() {
 	for {
-		// poll(), poll the consumer for msgs and events
-		ev := c.consumer.Poll(100)
-		if ev == nil {
-			continue
-		}
-
-		// e -> kafka event
-		switch e := ev.(type) {
-		case *kafka.Message:
-			_, err := c.consumer.StoreMessage(e)
-			if err != nil {
-				fmt.Println("store message error: ", err)
+		select {
+		case <-c.quitch:
+			return
+		default:
+			// poll(), poll the consumer for msgs and events
+			ev := c.consumer.Poll(100)
+			if ev == nil {
+				continue
 			}
 
-			var msg Message
-			if err := json.Unmarshal(e.Value, &msg); err != nil {
-				log.Fatal(err)
-			}
+			// e -> kafka event
+			switch e := ev.(type) {
+			case *kafka.Message:
+				_, err := c.consumer.StoreMessage(e)
+				if err != nil {
+					fmt.Println("store message error: ", err)
+				}
 
-			if err := c.Storage.Put(msg.State, e.Value); err != nil {
-				log.Fatal(err)
-			}
-		case kafka.Error:
-			if e.Code() == kafka.ErrAllBrokersDown {
-				break
+				var msg Message
+				if err := json.Unmarshal(e.Value, &msg); err != nil {
+					log.Fatal(err)
+				}
+
+				if err := c.Storage.Put(msg.State, e.Value); err != nil {
+					log.Fatal(err)
+				}
+			case kafka.Error:
+				if e.Code() == kafka.ErrAllBrokersDown {
+					break
+				}
 			}
 		}
 	}
@@ -144,20 +167,17 @@ func produce() {
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers": "localhost:9093",
 	})
-
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	if err != nil {
-		log.Fatal(err)
-	}
+	defer p.Close()
 
 	for i := 0; i < 1000; i++ {
 		msg := Message{
 			State: MessageState(rand.Intn(3)),
 		}
-		b, err := json.Marshal(msg)
+		b, _ := json.Marshal(msg)
 
 		err = p.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
@@ -172,5 +192,5 @@ func produce() {
 		}
 	}
 
-	defer p.Close()
+	p.Flush(5000)
 }
