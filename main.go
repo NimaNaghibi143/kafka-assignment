@@ -11,33 +11,33 @@ import (
 )
 
 type Storer interface {
-	Put(string, []byte) error
-	Get(string) ([]byte, error)
+	Put(MessageState, []byte) error
+	Get(MessageState) ([]byte, error)
 }
 
 type Storage struct {
 	mu   sync.RWMutex
-	data map[string][]byte
+	data map[MessageState][]byte
 }
 
 func NewStorage() *Storage {
 	return &Storage{
-		data: map[string][]byte{},
+		data: map[MessageState][]byte{},
 	}
 }
 
-func (s *Storage) Put(key string, val []byte) error {
+func (s *Storage) Put(state MessageState, val []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[key] = val
+	s.data[state] = val
 
 	return nil
 }
 
-func (s *Storage) Get(key string) ([]byte, error) {
+func (s *Storage) Get(state MessageState) ([]byte, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	val, ok := s.data[key]
+	val, ok := s.data[state]
 
 	if !ok {
 		return nil, fmt.Errorf("value not found")
@@ -64,6 +64,13 @@ type Message struct {
 
 func main() {
 	produce()
+
+	c, err := NewConsumer(NewStorage())
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	c.Start()
 }
 
 type Consumer struct {
@@ -96,6 +103,10 @@ func NewConsumer(storage Storer) (*Consumer, error) {
 	}, nil
 }
 
+func (c *Consumer) Start() {
+	go c.consumeLoop()
+}
+
 // it's a streaming server so it's considered a loop in my opinion
 func (c *Consumer) consumeLoop() {
 	for {
@@ -117,7 +128,10 @@ func (c *Consumer) consumeLoop() {
 			if err := json.Unmarshal(e.Value, &msg); err != nil {
 				log.Fatal(err)
 			}
-			fmt.Println(msg)
+
+			if err := c.Storage.Put(msg.State, e.Value); err != nil {
+				log.Fatal(err)
+			}
 		case kafka.Error:
 			if e.Code() == kafka.ErrAllBrokersDown {
 				break
