@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math/rand"
 	"sync"
-	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
 )
@@ -75,21 +74,22 @@ type Message struct {
 
 func main() {
 	ctx, cancel := context.WithCancel(context.TODO())
-
 	produce(cancel)
-
-	c, err := NewConsumer(NewStorage())
+	storage := NewStorage()
+	c, err := NewConsumer(storage)
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	go func() {
-		time.Sleep(time.Second * 5)
-		cancel()
-	}()
+	// go func() {
+	// 	time.Sleep(time.Second * 5)
+	// 	cancel()
+	// }()
 
 	c.consumeLoop(ctx)
-	fmt.Printf("%v+\n", c.Storage.(*Storage).data)
+	fmt.Println(counter[MessageStateCompleted])
+	msgs, _ := storage.Get(MessageStateCompleted)
+	fmt.Println(len(msgs))
+	// fmt.Printf("%v+\n", c.Storage.(*Storage).data)
 }
 
 type Consumer struct {
@@ -129,6 +129,7 @@ func NewConsumer(storage Storer) (*Consumer, error) {
 
 // it's a streaming server so it's considered a loop in my opinion
 func (c *Consumer) consumeLoop(ctx context.Context) {
+	count := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -143,6 +144,7 @@ func (c *Consumer) consumeLoop(ctx context.Context) {
 			// e -> kafka event
 			switch e := ev.(type) {
 			case *kafka.Message:
+				count++
 				_, err := c.consumer.StoreMessage(e)
 				if err != nil {
 					fmt.Println("store message error: ", err)
@@ -156,16 +158,26 @@ func (c *Consumer) consumeLoop(ctx context.Context) {
 				if err := c.Storage.Put(msg.State, e.Value); err != nil {
 					log.Fatal(err)
 				}
+				if count == 1000 {
+					return
+				}
 			case kafka.Error:
 				if e.Code() == kafka.ErrAllBrokersDown {
-					break
+					return
 				}
 			}
 		}
 	}
 }
 
+var counter = map[MessageState]int{
+	MessageStateCompleted:  0,
+	MessageStateInProgress: 0,
+	MessageStateFailed:     0,
+}
+
 func produce(cancel context.CancelFunc) {
+
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers": "localhost:9093",
 	})
@@ -177,8 +189,10 @@ func produce(cancel context.CancelFunc) {
 
 	slog.Info("Start Producing", "topic", topic, "messages", lenMessages)
 	for i := 0; i < lenMessages; i++ {
+		state := MessageState(rand.Intn(3))
+		counter[state]++
 		msg := Message{
-			State: MessageState(rand.Intn(3)),
+			State: state,
 		}
 		b, _ := json.Marshal(msg)
 
