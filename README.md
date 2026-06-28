@@ -1,16 +1,36 @@
-# Kafka-system-design
+# Kafka Message Pipeline
 
-This is a practice kafka assignment. the main purpose of this small project is:
+> Educational project for learning Apache Kafka fundamentals with Go.
 
-* Learning the the core concepts of kafka
-* Getting better at golang
+A small producer/consumer pipeline that demonstrates message production, streaming consumption, manual offset management, and in-memory state aggregation using the [Confluent Kafka Go client](https://github.com/confluentinc/confluent-kafka-go).
 
-## The Problem
+## How It Works
 
-Design the following system:
+1. **Producer** publishes 1000 JSON messages to a topic, each tagged with a random state: `completed`, `in-progress`, or `failed`.
+2. **Consumer** streams messages off the topic, parses each state, and stores it in a thread-safe persistent store bucketed by state.
+3. **Tests** assert that no messages are dropped and that each message lands in the correct bucket.
 
-a kafka producer that produces 1000 messages into a kafka topic as a batch. the producer produces massages that have differnt states, some states are failed, some are completed and some are in progress.
-write a kafka consumer the reads data from this topic and parses these states and store them into a persistent store.
-the persistent store now has various messages that are either successful, in progress or failed.
-write a test suite that is able to assert that there was no message dropped and the message were correctly parsed into each bucket of successful, in progress or failed.
-the system is not statis but is a streaming system.
+## Stack
+
+- Go 1.26
+- Apache Kafka 3.3 (Bitnami image, ZooKeeper mode)
+- Docker Compose
+
+## Getting Started
+
+```bash
+# Start Kafka + ZooKeeper
+docker compose up -d
+
+# Run the producer + consumer
+go run .
+
+# Run the test suite
+go test ./...
+```
+
+The broker is exposed on `localhost:9093`.
+
+## License
+
+For educational use.
