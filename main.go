@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"time"
@@ -51,6 +53,10 @@ func (s *Storage) Get(state MessageState) ([][]byte, error) {
 	return val, nil
 }
 
+const (
+	lenMessages = 1000
+)
+
 var (
 	topic = "foobarbaztopic"
 )
@@ -68,7 +74,9 @@ type Message struct {
 }
 
 func main() {
-	produce()
+	ctx, cancel := context.WithCancel(context.TODO())
+
+	produce(cancel)
 
 	c, err := NewConsumer(NewStorage())
 	if err != nil {
@@ -76,18 +84,17 @@ func main() {
 	}
 
 	go func() {
-		time.Sleep(time.Second * 4)
-		c.Stop()
+		time.Sleep(time.Second * 5)
+		cancel()
 	}()
 
-	c.consumeLoop()
+	c.consumeLoop(ctx)
 	fmt.Printf("%v+\n", c.Storage.(*Storage).data)
 }
 
 type Consumer struct {
 	consumer *kafka.Consumer
 	Storage  Storer
-	quitch   chan struct{}
 }
 
 func NewConsumer(storage Storer) (*Consumer, error) {
@@ -112,12 +119,7 @@ func NewConsumer(storage Storer) (*Consumer, error) {
 	return &Consumer{
 		Storage:  storage,
 		consumer: c,
-		quitch:   make(chan struct{}),
 	}, nil
-}
-
-func (c *Consumer) Stop() {
-	close(c.quitch)
 }
 
 // to avoid over engineering we comment this
@@ -126,10 +128,10 @@ func (c *Consumer) Stop() {
 // }
 
 // it's a streaming server so it's considered a loop in my opinion
-func (c *Consumer) consumeLoop() {
+func (c *Consumer) consumeLoop(ctx context.Context) {
 	for {
 		select {
-		case <-c.quitch:
+		case <-ctx.Done():
 			return
 		default:
 			// poll(), poll the consumer for msgs and events
@@ -163,7 +165,7 @@ func (c *Consumer) consumeLoop() {
 	}
 }
 
-func produce() {
+func produce(cancel context.CancelFunc) {
 	p, err := kafka.NewProducer(&kafka.ConfigMap{
 		"bootstrap.servers": "localhost:9093",
 	})
@@ -173,7 +175,8 @@ func produce() {
 
 	defer p.Close()
 
-	for i := 0; i < 1000; i++ {
+	slog.Info("Start Producing", "topic", topic, "messages", lenMessages)
+	for i := 0; i < lenMessages; i++ {
 		msg := Message{
 			State: MessageState(rand.Intn(3)),
 		}
@@ -191,6 +194,6 @@ func produce() {
 			log.Fatal(err)
 		}
 	}
-
+	slog.Info("Done Producing", "topic", topic, "messages", lenMessages)
 	p.Flush(5000)
 }
