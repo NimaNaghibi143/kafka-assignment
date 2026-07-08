@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./assets/golang-http.png" alt="simple-golang-pic" width="100%" />
+<img src="./assets/golang-kafka.png" alt="simple-golang-pic" width="100%" />
 
 # Kafka Message Pipeline
 
