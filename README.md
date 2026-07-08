@@ -1,8 +1,14 @@
+<div align="center">
+
+<img src="./assets/golang-http.png" alt="simple-golang-pic" width="100%" />
+
 # Kafka Message Pipeline
 
 > Educational project for learning Apache Kafka fundamentals with Go.
 
 A small producer/consumer pipeline that demonstrates message production, streaming consumption, manual offset management, and in-memory state aggregation using the [Confluent Kafka Go client](https://github.com/confluentinc/confluent-kafka-go).
+
+</div>
 
 ## How It Works
 
